@@ -235,6 +235,13 @@ def _build_freeze_manifest_parser() -> argparse.ArgumentParser:
     parser.add_argument("--judge-model", type=str, default=None)
     parser.add_argument("--judge-provider", type=str, default=None)
     parser.add_argument(
+        "--judge-json",
+        type=Path,
+        default=None,
+        help="path to a JSON object recorded verbatim as meta.judge "
+        "(mutually exclusive with --judge-model/--judge-provider)",
+    )
+    parser.add_argument(
         "--plaintext-out",
         type=Path,
         default=Path("secrets/"),
@@ -253,6 +260,13 @@ def freeze_manifest_main(argv: list[str]) -> int:
     if (args.judge_model is None) != (args.judge_provider is None):
         print(
             "error: --judge-model and --judge-provider must be given together or not at all",
+            file=sys.stderr,
+        )
+        return 2
+
+    if args.judge_json is not None and args.judge_model is not None:
+        print(
+            "error: --judge-json is mutually exclusive with --judge-model/--judge-provider",
             file=sys.stderr,
         )
         return 2
@@ -282,11 +296,22 @@ def freeze_manifest_main(argv: list[str]) -> int:
 
     source_parquet_sha256 = sha256_file(args.parquet)
     git_commit = _git_commit_sha()
-    judge = (
-        {"model": args.judge_model, "provider": args.judge_provider, "temperature": 0}
-        if args.judge_model is not None
-        else None
-    )
+
+    judge: dict | None = None
+    if args.judge_json is not None:
+        try:
+            judge = json.loads(args.judge_json.read_text(encoding="utf-8"))
+        except OSError as exc:
+            print(f"error: cannot read --judge-json file: {exc}", file=sys.stderr)
+            return 2
+        except json.JSONDecodeError as exc:
+            print(f"error: --judge-json file is not valid JSON: {exc}", file=sys.stderr)
+            return 2
+        if not isinstance(judge, dict):
+            print("error: --judge-json must contain a JSON object", file=sys.stderr)
+            return 2
+    elif args.judge_model is not None:
+        judge = {"model": args.judge_model, "provider": args.judge_provider, "temperature": 0}
 
     try:
         manifest = build_manifest(

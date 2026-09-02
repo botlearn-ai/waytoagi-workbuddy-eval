@@ -191,6 +191,61 @@ def test_cli_freeze_then_verify_manifest_roundtrip(tmp_path, monkeypatch, capsys
     assert SENTINEL not in verify_out
 
 
+def test_cli_freeze_manifest_judge_json(tmp_path, monkeypatch, capsys):
+    parquet_path, task_ids_path, _expect = _write_synthetic_dataset(tmp_path)
+    monkeypatch.setenv("GDPVAL_MANIFEST_KEY", generate_key())
+    judge = {
+        "platform": "synthetic-platform",
+        "model": "synthetic-judge-model",
+        "provider_order": ["synthetic-provider"],
+        "allow_fallbacks": False,
+        "temperature": 0,
+    }
+    judge_path = tmp_path / "judge.json"
+    judge_path.write_text(json.dumps(judge), encoding="utf-8")
+    plaintext_dir = tmp_path / "secrets"
+
+    base_args = [
+        "--task-ids",
+        str(task_ids_path),
+        "--parquet",
+        str(parquet_path),
+        "--revision",
+        "synthetic-revision-deadbeef",
+        "--out",
+        str(tmp_path / "manifests"),
+        "--exam-version",
+        "exam_judge_test",
+        "--plaintext-out",
+        str(plaintext_dir),
+    ]
+
+    exit_code = freeze_manifest_main([*base_args, "--judge-json", str(judge_path)])
+    out = capsys.readouterr().out
+
+    assert exit_code == 0
+    assert "status=frozen" in out
+    frozen = json.loads(
+        (plaintext_dir / "exam_judge_test.manifest.json").read_text(encoding="utf-8")
+    )
+    assert frozen["meta"]["judge"] == judge
+    assert frozen["meta"]["status"] == "frozen"
+
+    # --judge-json is mutually exclusive with --judge-model/--judge-provider.
+    both_exit = freeze_manifest_main(
+        [*base_args, "--judge-json", str(judge_path), "--judge-model", "synthetic-model"]
+    )
+    assert both_exit == 2
+    capsys.readouterr()
+
+    # A judge file that is not a JSON object is an argument error.
+    bad_judge_path = tmp_path / "bad_judge.json"
+    bad_judge_path.write_text("[1, 2]", encoding="utf-8")
+    bad_exit = freeze_manifest_main([*base_args, "--judge-json", str(bad_judge_path)])
+    assert bad_exit == 2
+    capsys.readouterr()
+
+
 def test_cli_freeze_manifest_env_and_judge_arg_errors(tmp_path, monkeypatch):
     parquet_path, task_ids_path, _expect = _write_synthetic_dataset(tmp_path)
     monkeypatch.delenv("GDPVAL_MANIFEST_KEY", raising=False)

@@ -1,0 +1,8 @@
+{
+  "platform": "openrouter",
+  "model": "deepseek/deepseek-v4-pro-0813",
+  "provider_order": ["DeepSeek"],
+  "allow_fallbacks": false,
+  "temperature": 0,
+  "rationale": "A2 decision 2026-09-02: neutral third-party judge (not ByteDance/Alibaba/Tencent). Dated model snapshot pins the version; provider_order pins routing to the DeepSeek first-party endpoint (Alibaba is among OpenRouter's hosts for this model and is excluded as a vendor under test); allow_fallbacks=false prevents silent provider drift."
+}
