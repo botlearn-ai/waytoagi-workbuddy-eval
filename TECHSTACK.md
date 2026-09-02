@@ -1,0 +1,41 @@
+# TECHSTACK.md
+
+## 语言与运行时
+
+- Python ≥ 3.11,环境与依赖用 uv 管理(`uv sync`),打包后端 hatchling,src layout。
+
+## 依赖
+
+| 包 | 用途 |
+|---|---|
+| pyarrow | 读 GDPval parquet |
+| cryptography | manifest Fernet 加解密 |
+| httpx | parquet 与素材文件下载 |
+| pytest(dev) | 测试 |
+| ruff(dev) | lint |
+
+## 外部服务
+
+- HuggingFace:数据集 `openai/gdpval`,下载端点可用 `HF_ENDPOINT` 换镜像(默认 https://huggingface.co)。
+- LLM judge:未接入;模型与 provider 待 A2 拍板,拍板后写入 manifest 锁定。
+
+## 目录结构
+
+```
+src/gdpval_eval/    业务模块(见 PROJECT.md 模块地图)
+scripts/            CLI:verify_dataset.py、freeze_manifest.py
+tests/              单元测试;tests/visible/、tests/hidden/ 为判分盲测
+manifests/          加密 manifest、content 指纹、LEDGER.jsonl(tracked)
+secrets/            20 题清单、逐题统计预期、manifest 明文副本与 key(gitignored)
+data/               下载的 parquet、素材、gold(gitignored)
+.claude/plans/      进行中的 plan(tracked)
+```
+
+## 环境变量
+
+| 变量 | 用途 |
+|---|---|
+| `HF_ENDPOINT` | 覆盖 HuggingFace 下载端点(镜像) |
+| `GDPVAL_MANIFEST_KEY` | manifest 加密 key(Fernet),不入库 |
+
+无数据库、无端口、无部署目标。

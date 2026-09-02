@@ -1,0 +1,18 @@
+# 保密与本地数据:题面、素材、gold、20 题清单及其统计预期,绝不入库
+secrets/
+data/
+# 明文 manifest 兜底(tracked 的只有加密 .enc、指纹与 ledger)
+*.manifest.json
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+dist/
+*.egg-info/
+
+# 本地产物
+out/
+.DS_Store
