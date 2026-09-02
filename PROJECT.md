@@ -10,9 +10,9 @@
 
 | 阶段 | 内容 | 状态 |
 |---|---|---|
-| W1 数据管线 | parquet 下载、考卷校验、评分点哈希、manifest 冻结加密 | 开发中 |
-| 判分核心 | 计分公式(三状态 + 保护规则)、判定通道粗分 | 开发中 |
-| W0 产品试跑 / W2 LLM 裁决通道 / W3 提交与报告 / W4 自动提交 | — | 未开始 |
+| W1 数据管线 | parquet 下载(revision 钉 `11e7900cdcac61bc4daf59e65feb238acda98fbf`)、考卷校验、评分点哈希、manifest 冻结加密、三个 CLI | 完成;exam_v1 已冻结(status=draft-pending-A2,待 A2 拍板 judge 后重冻 meta),content 指纹见 manifests/ |
+| 判分核心 | 计分公式(三状态 + 保护规则,盲测 22 例)、判定通道粗分 | 完成;通道分派待 W1 人工复核 891 条 |
+| W0 产品试跑 / W2 LLM 裁决通道与通用检查器 / W3 提交与报告 / W4 自动提交 | — | 未开始 |
 
 ## 核心数据模型
 
@@ -34,5 +34,6 @@
 | channels.py | 判定通道规则粗分 |
 | scoring.py | 计分公式(盲测保护) |
 | crypto.py | manifest 加解密 |
-| manifest.py | manifest 构建与冻结 |
-| scripts/ | verify_dataset.py、freeze_manifest.py 两个 CLI |
+| manifest.py | canonical_json、manifest 构建/冻结/验证、ledger |
+| cli.py | 三个 CLI 的参数解析与组装 |
+| scripts/ | verify_dataset.py、freeze_manifest.py、verify_manifest.py 薄壳 |
