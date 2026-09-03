@@ -6,14 +6,14 @@
 - [x] .gitignore 加 runs/;pyproject 加 httpx[socks]/openpyxl/python-docx/python-pptx/pypdf/defusedxml
 
 ### Wave 1 — 并行
-- [ ] U1  交付物解析     file: src/gdpval_eval/extract.py(防炸弹上限、defusedxml 断言、空文本合法)
-- [ ] U3  LLM 裁决(盲测) file: src/gdpval_eval/judge.py(白名单解析、provider 校验、over_context)
-- [ ] U4  判定存储(盲测) file: src/gdpval_eval/verdicts.py(flock、原子行写、resolved 拒重写)
-- [ ] U6  任务文件下载   file: src/gdpval_eval/assets.py(临时名+原子 rename)
+- [x] U1  交付物解析 — 8 例绿(实体炸弹拦截实测),已验收
+- [x] U3  LLM 裁决(盲测)— visible 4/4 + hidden 31/31,已验收
+- [x] U4  判定存储(盲测)— visible 3/3 + hidden 25/25,已验收
+- [x] U6  任务文件下载 — 4 例绿,已验收
 
 ### Wave 2 — 并行,依赖 U1
-- [ ] U2  确定性检查器(盲测) file: src/gdpval_eval/checkers.py(四检查器,不适用→None)
-- [ ] U7  改坏工具       file: src/gdpval_eval/degrade.py(control/truncated/shuffled,变化断言)
+- [x] U2  确定性检查器(盲测)— visible 3/3 + hidden 34/34;架构师追加 text_excludes/sheet_exists_ci(5 例),已验收
+- [x] U7  改坏工具 — 8 例绿(量具自检:token 多重集合判定),已验收
 
 ### Wave 3 — 依赖 U1-U4
 - [ ] U5  判分编排(盲测) file: src/gdpval_eval/grade.py(先查已判、并发 6、熔断、空文本守卫)
