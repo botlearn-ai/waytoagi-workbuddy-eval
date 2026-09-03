@@ -22,6 +22,7 @@
 - [ ] U8  区分度检验:4 题 gold 已下载、改坏量具空跑通过、真实判分运行中(约 620 次调用);impl-reviewer 终审并行中
 
 ## 待办(repo 配好 remote 后转 GitHub issues)
+- [ ] W3 跑分执行器:自动循环重判 pass 直到无 incomplete 或无进展(校验实测 DeepSeek 偶发空响应,单轮修复重试不总够;重判机制即为此设计,勿手动重跑)
 - [ ] extract.py 依赖 openpyxl 私有 `_charts` 属性测图表存在;升级 openpyxl 可能静默失效(终审 LOW)
 - [ ] assets.py 流式下载中的网络级异常未包装为 DatasetDownloadError,残留 .part(无害,重下覆盖;终审 LOW)
 - [ ] verdicts.py 对 product/exam_version 无路径分隔符消毒(当前只有可信内部调用方;终审 LOW)

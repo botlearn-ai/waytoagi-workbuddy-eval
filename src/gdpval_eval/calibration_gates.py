@@ -56,21 +56,28 @@ def task_gate_failures(g: TaskGateInput) -> tuple[list[str], list[str]]:
 
     if g.gold < GOLD_FLOOR:
         failures.append(f"题{g.ordinal}: gold={float(g.gold):.2f} < 3.0")
-    if g.control - g.truncated < ABSOLUTE_GAP:
+
+    # 绝对分差闸按「该题可检出的变体」施加(红队 F1 修法):哪种改坏对一道题
+    # 有杀伤取决于评分点分布——砍半工作簿对评分点集中于单个主表的 xlsx 天然
+    # 低杀伤,而数字打乱在同一题上掉 1.5+ 分。要求至少一个变体 ≥1.0,
+    # 两个分差都打印,报告透明。
+    gap_truncated = g.control - g.truncated
+    gap_shuffled = g.control - g.shuffled
+    notes.append(
+        f"题{g.ordinal}: 分差 control−truncated={float(gap_truncated):.2f}, "
+        f"control−shuffled={float(gap_shuffled):.2f}"
+    )
+    if max(gap_truncated, gap_shuffled) < ABSOLUTE_GAP:
         failures.append(
-            f"题{g.ordinal}: control−truncated={float(g.control - g.truncated):.2f} < 1.0"
+            f"题{g.ordinal}: 无任何改坏变体与 control 的分差 ≥1.0"
+            f"(truncated {float(gap_truncated):.2f} / shuffled {float(gap_shuffled):.2f})"
         )
 
     if g.fmt == "pdf":
         notes.append(
             f"题{g.ordinal}: pdf 内容流不可改写,shuffled=删数字密集页(截半类),"
-            "按绝对分差规则判定"
+            "翻转率闸不适用"
         )
-        if g.control - g.shuffled < ABSOLUTE_GAP:
-            failures.append(
-                f"题{g.ordinal}: control−shuffled(pdf 删页)="
-                f"{float(g.control - g.shuffled):.2f} < 1.0"
-            )
     elif g.flip_rate is None:
         failures.append(f"题{g.ordinal}: gold 在预期集内无 MET 条目,shuffled 闸空转")
     elif g.flip_rate < FLIP_RATE_FLOOR:

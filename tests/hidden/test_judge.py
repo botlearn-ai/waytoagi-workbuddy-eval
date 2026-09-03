@@ -25,7 +25,7 @@ Contract under test (from the work-unit spec, .claude/plans/gdpval-grading-w2.md
   * Parsing: take message.content's last non-empty line, strip markdown
     (**, `) and surrounding punctuation, whole-word match against MET /
     NOT_MET. Exactly one hit -> that state. Both, neither, empty content,
-    or finish_reason=="length" -> one repair retry (max_tokens=8192,
+    or finish_reason=="length" -> one repair retry (max_tokens=32768,
     messages append a format-fix instruction). Still unresolved ->
     state=None, incomplete_reason="judge_unparseable".
   * Retry (<=3 attempts total) on HTTP 429/5xx/network errors. Other 4xx,
@@ -378,7 +378,7 @@ def test_judge_item_raw_stores_content_verbatim():
 
 def test_judge_item_dual_token_tail_line_triggers_repair_then_unparseable():
     """Both MET and NOT_MET present on the tail line is ambiguous: it
-    triggers exactly one repair retry (max_tokens=8192, extra message
+    triggers exactly one repair retry (max_tokens=32768, extra message
     appended); still ambiguous the second time -> judge_unparseable.
     """
     ambiguous = "Final answer: MET or NOT_MET"
@@ -399,7 +399,7 @@ def test_judge_item_dual_token_tail_line_triggers_repair_then_unparseable():
     first_body = recorder.body(0)
     second_body = recorder.body(1)
     assert first_body["max_tokens"] == 4096
-    assert second_body["max_tokens"] == 8192
+    assert second_body["max_tokens"] == 32768
     assert len(second_body["messages"]) > len(first_body["messages"])
 
 
@@ -422,7 +422,7 @@ def test_judge_item_empty_content_triggers_repair_then_succeeds():
     assert outcome.state == ItemState.CONDITION_NOT_MET
     assert outcome.incomplete_reason is None
     assert outcome.raw == second_content
-    assert recorder.body(1)["max_tokens"] == 8192
+    assert recorder.body(1)["max_tokens"] == 32768
 
 
 def test_judge_item_finish_reason_length_forces_repair_even_if_parseable():

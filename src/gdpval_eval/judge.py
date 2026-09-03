@@ -127,7 +127,7 @@ def judge_item(
 
         repair_messages = [*messages, {"role": "user", "content": _REPAIR_INSTRUCTION}]
         result = _call_once(
-            client, cfg, api_key, repair_messages, max_tokens=8192, use_backoff=use_backoff
+            client, cfg, api_key, repair_messages, max_tokens=32768, use_backoff=use_backoff
         )
         if result.retryable_unparsed:
             return JudgeOutcome(
