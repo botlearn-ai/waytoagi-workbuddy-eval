@@ -7,6 +7,9 @@ data/
 # 判定存档:模型原文会引用评分点内容,绝不入库
 runs/
 
+# 人工提交工作区:inbox 含题面与素材,outbox 含产品交付物,绝不入库
+submissions/
+
 # Python
 .venv/
 __pycache__/
