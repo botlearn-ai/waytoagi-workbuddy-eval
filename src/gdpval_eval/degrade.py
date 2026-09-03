@@ -28,6 +28,7 @@ import pypdf
 from docx import Document as DocxDocument
 from docx.oxml.ns import qn as docx_qn
 from pptx import Presentation
+from pptx.enum.shapes import MSO_SHAPE_TYPE
 from pptx.oxml.ns import qn as pptx_qn
 
 from gdpval_eval.extract import extract_document
@@ -304,10 +305,24 @@ def _shuffle_docx(gold: Path, out_path: Path) -> Path:
 
 def _shuffle_pptx(gold: Path, out_path: Path) -> Path:
     prs = Presentation(str(gold))
-    for slide in prs.slides:
-        for shape in slide.shapes:
+
+    def _walk(shapes) -> None:
+        # Tables and grouped shapes carry numbers too (a whole slide can be
+        # one table); skipping them leaves the variant equivalent where it
+        # matters — the same blind spot the extractor once had.
+        for shape in shapes:
+            if shape.shape_type == MSO_SHAPE_TYPE.GROUP:
+                _walk(shape.shapes)
+                continue
+            if getattr(shape, "has_table", False):
+                for row in shape.table.rows:
+                    for cell in row.cells:
+                        _shuffle_paragraph_runs(cell.text_frame.paragraphs)
             if getattr(shape, "has_text_frame", False):
                 _shuffle_paragraph_runs(shape.text_frame.paragraphs)
+
+    for slide in prs.slides:
+        _walk(slide.shapes)
     prs.save(out_path)
     _assert_numbers_changed(gold, out_path, "pptx")
     return out_path
