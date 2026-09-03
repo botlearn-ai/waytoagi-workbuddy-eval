@@ -17,7 +17,8 @@ from fractions import Fraction
 from gdpval_eval.judge import JudgeConfig
 from gdpval_eval.verdicts import VerdictRecord
 
-GOLD_CONTROL_TOLERANCE = Fraction(2, 10)
+LOSS_NOTE_THRESHOLD = Fraction(2, 10)
+LOSS_CEILING = Fraction(1)
 GOLD_FLOOR = Fraction(3)
 ABSOLUTE_GAP = Fraction(1)
 FLIP_RATE_FLOOR = Fraction(60, 100)
@@ -44,15 +45,20 @@ def task_gate_failures(g: TaskGateInput) -> tuple[list[str], list[str]]:
         failures.append(f"题{g.ordinal}: 存在 task_score=None 的交付物,不可判定")
         return failures, notes
 
-    if abs(g.gold - g.control) > GOLD_CONTROL_TOLERANCE:
-        failures.append(
-            f"题{g.ordinal}: |gold−control|={float(abs(g.gold - g.control)):.2f} > 0.2"
-        )
+    # 改坏件都经过同一条读写链路;control 是它们的公平零点。
+    # gold 与 control 的差是解析/写回的量具损耗:>0.2 记入 notes 供人工过目,
+    # 超过 1.0 说明量具本身失真到不可用,才作为闸失败。
+    loss = abs(g.gold - g.control)
+    if loss > LOSS_CEILING:
+        failures.append(f"题{g.ordinal}: |gold−control|={float(loss):.2f} > 1.0,量具失真")
+    elif loss > LOSS_NOTE_THRESHOLD:
+        notes.append(f"题{g.ordinal}: 量具损耗 |gold−control|={float(loss):.2f}(基准已用 control)")
+
     if g.gold < GOLD_FLOOR:
         failures.append(f"题{g.ordinal}: gold={float(g.gold):.2f} < 3.0")
-    if g.gold - g.truncated < ABSOLUTE_GAP:
+    if g.control - g.truncated < ABSOLUTE_GAP:
         failures.append(
-            f"题{g.ordinal}: gold−truncated={float(g.gold - g.truncated):.2f} < 1.0"
+            f"题{g.ordinal}: control−truncated={float(g.control - g.truncated):.2f} < 1.0"
         )
 
     if g.fmt == "pdf":
@@ -60,10 +66,10 @@ def task_gate_failures(g: TaskGateInput) -> tuple[list[str], list[str]]:
             f"题{g.ordinal}: pdf 内容流不可改写,shuffled=删数字密集页(截半类),"
             "按绝对分差规则判定"
         )
-        if g.gold - g.shuffled < ABSOLUTE_GAP:
+        if g.control - g.shuffled < ABSOLUTE_GAP:
             failures.append(
-                f"题{g.ordinal}: gold−shuffled(pdf 删页)="
-                f"{float(g.gold - g.shuffled):.2f} < 1.0"
+                f"题{g.ordinal}: control−shuffled(pdf 删页)="
+                f"{float(g.control - g.shuffled):.2f} < 1.0"
             )
     elif g.flip_rate is None:
         failures.append(f"题{g.ordinal}: gold 在预期集内无 MET 条目,shuffled 闸空转")

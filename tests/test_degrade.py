@@ -50,7 +50,10 @@ def _add_pdf_text_page(writer: PdfWriter, text: str) -> None:
     page.replace_contents(stream_obj)
 
 
-def test_degrade_xlsx_truncated_halves_rows_and_control_preserves_values(tmp_path):
+def test_degrade_xlsx_truncated_drops_back_sheets_and_control_preserves_values(tmp_path):
+    """Multi-sheet workbooks lose the back half of their sheets (real-data
+    calibration showed row-halving barely moves the judge); single-sheet
+    workbooks fall back to row-halving."""
     gold = tmp_path / "ledger.xlsx"
     wb = openpyxl.Workbook()
     ledger = wb.active
@@ -68,11 +71,26 @@ def test_degrade_xlsx_truncated_halves_rows_and_control_preserves_values(tmp_pat
     assert result["roundtrip_control"].name == f"roundtrip_control_{gold.name}"
 
     truncated_wb = openpyxl.load_workbook(result["truncated"])
-    assert truncated_wb["Ledger"].max_row == 2
-    assert [c.value for c in truncated_wb["Ledger"]["A"] if c.value is not None] == [111, 25307]
-    assert truncated_wb["Tiny"].max_row == 1
-    assert truncated_wb["Tiny"]["A1"].value == 7
+    assert truncated_wb.sheetnames == ["Ledger"]
+    assert [c.value for c in truncated_wb["Ledger"]["A"] if c.value is not None] == [
+        111,
+        25307,
+        481,
+        9,
+    ]
     assert extract_document(result["truncated"]).fmt == "xlsx"
+
+    # Single-sheet fallback: rows are halved instead.
+    single = tmp_path / "single.xlsx"
+    wb2 = openpyxl.Workbook()
+    ws2 = wb2.active
+    ws2.title = "Only"
+    for i, value in enumerate([31, 42, 53, 64], start=1):
+        ws2.cell(row=i, column=1, value=value)
+    wb2.save(single)
+    single_result = make_degraded(single, tmp_path / "out_single")
+    single_trunc = openpyxl.load_workbook(single_result["truncated"])
+    assert single_trunc["Only"].max_row == 2
 
     control_wb = openpyxl.load_workbook(result["roundtrip_control"])
     assert [c.value for c in control_wb["Ledger"]["A"] if c.value is not None] == [

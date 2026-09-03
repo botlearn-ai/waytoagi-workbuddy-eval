@@ -195,21 +195,29 @@ def _control_pdf(gold: Path, out_path: Path) -> Path:
 
 
 def _truncate_xlsx(gold: Path, out_path: Path) -> Path:
+    # Drop the back half of the worksheets (real-data calibration showed
+    # row-halving barely moves the judge on structure-heavy workbooks:
+    # a whole missing sheet is what "half the work missing" looks like).
+    # Single-sheet workbooks fall back to row-halving.
     wb = openpyxl.load_workbook(gold)
-    total_before = 0
-    total_after = 0
     try:
-        for ws in wb.worksheets:
+        n_sheets = len(wb.worksheets)
+        if n_sheets > 1:
+            drop, keep = _half_drop_keep(n_sheets)
+            for ws in list(wb.worksheets[keep:]):
+                wb.remove(ws)
+            wb.save(out_path)
+            _assert_count_reduced(n_sheets, keep, "xlsx", "sheet")
+        else:
+            ws = wb.worksheets[0]
             n = ws.max_row or 0
             drop, keep = _half_drop_keep(n)
-            total_before += n
-            total_after += keep
             if drop > 0:
                 ws.delete_rows(keep + 1, drop)
-        wb.save(out_path)
+            wb.save(out_path)
+            _assert_count_reduced(n, keep, "xlsx", "row")
     finally:
         wb.close()
-    _assert_count_reduced(total_before, total_after, "xlsx", "row")
     return out_path
 
 

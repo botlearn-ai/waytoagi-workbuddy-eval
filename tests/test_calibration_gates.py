@@ -65,11 +65,20 @@ def test_calibration_gates_all_green_no_failures():
 
 def test_calibration_gates_score_gates_each_fail():
     assert task_gate_failures(_gate(gold=Fraction(29, 10)))[0]  # gold < 3.0
-    assert task_gate_failures(_gate(control=Fraction(37, 10)))[0]  # |g-c| > 0.2
-    assert task_gate_failures(_gate(truncated=Fraction(31, 10)))[0]  # gap < 1.0
+    assert task_gate_failures(_gate(control=Fraction(51, 10)))[0]  # |g-c| > 1.0 量具失真
+    assert task_gate_failures(_gate(truncated=Fraction(31, 10)))[0]  # control-gap < 1.0
     assert task_gate_failures(_gate(flip_rate=Fraction(1, 2)))[0]  # flip < 60%
     none_failures, _ = task_gate_failures(_gate(shuffled=None))
     assert none_failures == ["题3: 存在 task_score=None 的交付物,不可判定"]
+
+
+def test_calibration_gates_control_loss_between_02_and_10_is_note_not_failure():
+    """量具损耗在 (0.2, 1.0] 区间只出 note,分差基准换 control 后不拦。"""
+    failures, notes = task_gate_failures(
+        _gate(gold=Fraction(35, 10), control=Fraction(3), truncated=Fraction(19, 10))
+    )
+    assert failures == []
+    assert any("量具损耗" in n for n in notes)
 
 
 def test_calibration_gates_flip_rate_boundary_60_percent_passes():

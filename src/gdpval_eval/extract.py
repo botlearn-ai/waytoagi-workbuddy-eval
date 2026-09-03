@@ -234,14 +234,29 @@ def _extract_pptx(path: Path) -> ExtractedDoc:
     lines: list[str] = []
     has_chart = False
     image_count = 0
-    for slide_index, slide in enumerate(prs.slides, start=1):
-        for shape in slide.shapes:
+
+    def _walk_shapes(shapes, slide_index: int) -> None:
+        # Tables and grouped shapes carry real deliverable content (a whole
+        # slide can be one table); missing them silently starves the judge.
+        nonlocal has_chart, image_count
+        for shape in shapes:
+            if shape.shape_type == MSO_SHAPE_TYPE.GROUP:
+                _walk_shapes(shape.shapes, slide_index)
+                continue
+            if getattr(shape, "has_table", False):
+                for row in shape.table.rows:
+                    row_text = " | ".join(cell.text for cell in row.cells)
+                    if row_text.strip():
+                        lines.append(f"Slide {slide_index} table: {row_text}")
             if getattr(shape, "has_text_frame", False) and shape.text_frame.text:
                 lines.append(f"Slide {slide_index}: {shape.text_frame.text}")
             if getattr(shape, "has_chart", False):
                 has_chart = True
             if shape.shape_type == MSO_SHAPE_TYPE.PICTURE:
                 image_count += 1
+
+    for slide_index, slide in enumerate(prs.slides, start=1):
+        _walk_shapes(slide.shapes, slide_index)
 
     text = "\n".join(lines)
     facts = DocFacts(
