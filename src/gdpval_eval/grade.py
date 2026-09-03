@@ -234,60 +234,76 @@ def _judge_text_channel(
             return None
 
     budget_exhausted_hit = False
-    submissions: list[tuple[dict, object]] = []
+    total_cost = 0.0
+    consecutive_failures = 0
+    window = max(1, concurrency)
+    # index -> Future | None (None = budget-exhausted, never dispatched).
+    futures: dict[int, object] = {}
+    next_to_submit = 0
 
-    with ThreadPoolExecutor(max_workers=max(1, concurrency)) as pool:
-        for item in items:
+    def _submit_window(pool: ThreadPoolExecutor, harvested: int) -> None:
+        """Keep at most `window` dispatched calls beyond the harvest point,
+        so the circuit breaker bounds external calls even under
+        concurrency: once it trips, nothing new is ever dispatched."""
+        nonlocal next_to_submit, budget_exhausted_hit
+        while next_to_submit < len(items) and next_to_submit - harvested < window:
             if budget_exhausted_hit or (
                 call_budget is not None and not call_budget.try_acquire()
             ):
                 budget_exhausted_hit = True
-                submissions.append((item, None))
+                futures[next_to_submit] = None
             else:
-                submissions.append((item, pool.submit(_run, item)))
+                futures[next_to_submit] = pool.submit(_run, items[next_to_submit])
+            next_to_submit += 1
 
-        total_cost = 0.0
-        consecutive_failures = 0
-        for item, future in submissions:
+    with ThreadPoolExecutor(max_workers=window) as pool:
+        for index, item in enumerate(items):
+            _submit_window(pool, index)
+            future = futures.pop(index)
             if future is None:
+                # Deliberate throttling, not a judge failure: the breaker
+                # streak is left untouched.
                 write(item, state=None, reason="budget_exhausted")
+                continue
+
+            outcome = future.result()
+            if outcome is None:
+                write(item, state=None, reason="judge_exception")
+                consecutive_failures += 1
+            elif outcome.state is None:
+                total_cost += outcome.cost
+                write(
+                    item,
+                    state=None,
+                    reason=outcome.incomplete_reason,
+                    raw=outcome.raw,
+                    cost=outcome.cost,
+                    served_model=outcome.served_model,
+                    served_provider=outcome.served_provider,
+                )
                 consecutive_failures += 1
             else:
-                outcome = future.result()
-                if outcome is None:
-                    write(item, state=None, reason="judge_exception")
-                    consecutive_failures += 1
-                elif outcome.state is None:
-                    total_cost += outcome.cost
-                    write(
-                        item,
-                        state=None,
-                        reason=outcome.incomplete_reason,
-                        raw=outcome.raw,
-                        cost=outcome.cost,
-                        served_model=outcome.served_model,
-                        served_provider=outcome.served_provider,
-                    )
-                    consecutive_failures += 1
-                else:
-                    total_cost += outcome.cost
-                    reason = (
-                        outcome.no_evidence_reason
-                        if outcome.state == ItemState.NO_EVIDENCE
-                        else None
-                    )
-                    write(
-                        item,
-                        state=outcome.state,
-                        reason=reason,
-                        raw=outcome.raw,
-                        cost=outcome.cost,
-                        served_model=outcome.served_model,
-                        served_provider=outcome.served_provider,
-                    )
-                    consecutive_failures = 0
+                total_cost += outcome.cost
+                reason = (
+                    outcome.no_evidence_reason
+                    if outcome.state == ItemState.NO_EVIDENCE
+                    else None
+                )
+                write(
+                    item,
+                    state=outcome.state,
+                    reason=reason,
+                    raw=outcome.raw,
+                    cost=outcome.cost,
+                    served_model=outcome.served_model,
+                    served_provider=outcome.served_provider,
+                )
+                consecutive_failures = 0
 
             if consecutive_failures >= _CIRCUIT_BREAKER_STREAK:
+                for pending in futures.values():
+                    if pending is not None:
+                        pending.cancel()
                 raise GradeAbortError(
                     "text channel judging aborted after "
                     f"{_CIRCUIT_BREAKER_STREAK} consecutive failures"

@@ -43,6 +43,7 @@ _MAX_ZIP_TOTAL_BYTES = 500 * 1024 * 1024
 _MAX_ZIP_ENTRIES = 10_000
 _MAX_XLSX_CELLS = 200_000
 _MAX_PDF_PAGES = 500
+_MAX_PDF_TEXT_CHARS = 2_000_000
 
 
 class ExtractError(GdpvalEvalError):
@@ -267,6 +268,8 @@ def _extract_pdf(path: Path) -> ExtractedDoc:
         raise ExtractError(f"pdf: page count {page_count} exceeds limit {_MAX_PDF_PAGES}")
 
     lines: list[str] = []
+    total_chars = 0
+    truncated = False
     for page in reader.pages:
         try:
             page_text = page.extract_text() or ""
@@ -276,6 +279,12 @@ def _extract_pdf(path: Path) -> ExtractedDoc:
             ) from exc
         if page_text:
             lines.append(page_text)
+            total_chars += len(page_text)
+        # Content streams decompress without a zip-style size gate; cap the
+        # total extracted text so a pdf decompression bomb cannot OOM us.
+        if total_chars > _MAX_PDF_TEXT_CHARS:
+            truncated = True
+            break
 
     text = "\n".join(lines)
     facts = DocFacts(
@@ -286,6 +295,6 @@ def _extract_pdf(path: Path) -> ExtractedDoc:
         formula_count=0,
         image_count=0,
         text_chars=len(text),
-        truncated=False,
+        truncated=truncated,
     )
     return ExtractedDoc(fmt="pdf", text=text, facts=facts)

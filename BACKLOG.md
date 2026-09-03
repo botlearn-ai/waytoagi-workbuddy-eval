@@ -16,12 +16,15 @@
 - [x] U7  改坏工具 — 8 例绿(量具自检:token 多重集合判定),已验收
 
 ### Wave 3 — 依赖 U1-U4
-- [ ] U5  判分编排(盲测) file: src/gdpval_eval/grade.py(先查已判、并发 6、熔断、空文本守卫)
+- [x] U5  判分编排(盲测)— visible 3/3 + hidden 19/19,已验收(commit 63f3506)
 
 ### Wave 4 — 依赖 U5 U6 U7,架构师
-- [ ] U8  区分度检验 scripts/calibration.py:4 题 × 4 份,六道放行闸,真实 API
+- [ ] U8  区分度检验:4 题 gold 已下载、改坏量具空跑通过、真实判分运行中(约 620 次调用);impl-reviewer 终审并行中
 
 ## 待办(repo 配好 remote 后转 GitHub issues)
+- [ ] extract.py 依赖 openpyxl 私有 `_charts` 属性测图表存在;升级 openpyxl 可能静默失效(终审 LOW)
+- [ ] assets.py 流式下载中的网络级异常未包装为 DatasetDownloadError,残留 .part(无害,重下覆盖;终审 LOW)
+- [ ] verdicts.py 对 product/exam_version 无路径分隔符消毒(当前只有可信内部调用方;终审 LOW)
 - [ ] 891 条判定通道人工复核(阻塞正式判分;复核若改通道 → 升版重冻,ledger 存证)
 - [ ] W2b 人工提交工具包:inbox/outbox + 校验脚本 + 协议手册(prose 流程)
 - [ ] 视觉通道(42 条 VISION 首轮记无证据;需另选多模态 judge,属新决策)

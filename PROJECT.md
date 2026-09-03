@@ -35,5 +35,13 @@
 | scoring.py | 计分公式(盲测保护) |
 | crypto.py | manifest 加解密 |
 | manifest.py | canonical_json、manifest 构建/冻结/验证、ledger |
+| extract.py | 四格式交付物解析(文本+结构事实,防炸弹上限) |
+| checkers.py | 参数化确定性检查器(六个;参数存 secrets/) |
+| judge.py | OpenRouter 文本裁决客户端(nonce 数据区、白名单解析、served 校验) |
+| verdicts.py | 判定存储(写一次、flock 单写者、runs/ gitignored) |
+| grade.py | 单交付物判分编排(断点续跑、有界并发、熔断) |
+| degrade.py | 校验用改坏量具(control/truncated/shuffled,变化断言) |
+| assets.py | gold/素材文件下载 |
+| calibration_gates.py | 区分度检验放行闸(纯函数) |
 | cli.py | 三个 CLI 的参数解析与组装 |
-| scripts/ | verify_dataset.py、freeze_manifest.py、verify_manifest.py 薄壳 |
+| scripts/ | verify_dataset / freeze_manifest / verify_manifest / calibration |

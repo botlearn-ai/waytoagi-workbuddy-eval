@@ -10,7 +10,9 @@
 |---|---|
 | pyarrow | 读 GDPval parquet |
 | cryptography | manifest Fernet 加解密 |
-| httpx | parquet 与素材文件下载 |
+| httpx[socks] | 下载与 OpenRouter judge 调用(socks:本机代理环境) |
+| openpyxl + defusedxml | xlsx 解析(defusedxml 必装,extract 导入时断言生效,防 XML 实体炸弹) |
+| python-docx / python-pptx / pypdf | docx / pptx / pdf 解析与改坏工具 |
 | pytest(dev) | 测试 |
 | ruff(dev) | lint |
 

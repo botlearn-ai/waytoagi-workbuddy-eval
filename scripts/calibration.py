@@ -16,6 +16,12 @@ from pathlib import Path
 import pyarrow.parquet as pq
 
 from gdpval_eval.assets import download_task_files
+from gdpval_eval.calibration_gates import (
+    TaskGateInput,
+    overall_harness_failure,
+    provider_gate_failures,
+    task_gate_failures,
+)
 from gdpval_eval.degrade import make_degraded
 from gdpval_eval.grade import CallBudget, GradeAbortError, grade_deliverable
 from gdpval_eval.judge import judge_item, load_judge_config
@@ -102,7 +108,6 @@ def main(argv: list[str]) -> int:
     gate_failures: list[str] = []
     total_cost = 0.0
     all_counts = {"items": 0, "harness_failures": 0}
-    served_ok = True
 
     for ordi in ordinals:
         mtask = manifest["content"]["tasks"][ordi - 1]
@@ -144,23 +149,9 @@ def main(argv: list[str]) -> int:
             ts = _results[product].task_score
             return None if ts is None else ts.score_5
 
-        g, c = _score(GOLD), _score("calib-control")
-        t, s = _score("calib-truncated"), _score("calib-shuffled")
-        if any(v is None for v in (g, c, t, s)):
-            gate_failures.append(f"题{ordi}: 存在 task_score=None 的交付物,不可判定")
-            continue
-        if abs(g - c) > Fraction(2, 10):
-            gate_failures.append(f"题{ordi}: |gold−control|={float(abs(g - c)):.2f} > 0.2")
-        if g < 3:
-            gate_failures.append(f"题{ordi}: gold={float(g):.2f} < 3.0")
-        if g - t < 1:
-            gate_failures.append(f"题{ordi}: gold−truncated={float(g - t):.2f} < 1.0")
-
-        fmt = mtask["deliverable_formats"]
-        if fmt == ["pdf"]:
-            if g - s < 1:
-                gate_failures.append(f"题{ordi}: gold−shuffled(pdf 删页)={float(g - s):.2f} < 1.0")
-        else:
+        fmt = mtask["deliverable_formats"][0] if mtask["deliverable_formats"] else ""
+        flip_rate: Fraction | None = None
+        if fmt != "pdf":
             exp = expected_sets[str(ordi)]["shuffled_expected_candidates"]
             exp_ids = {e["rubric_item_id"] for e in exp}
             by_id_gold = {r.rubric_item_id: r.state for r in store.load(GOLD, 1, exam_version)
@@ -172,29 +163,34 @@ def main(argv: list[str]) -> int:
             flipped = [i for i in met_in_exp
                        if by_id_shuf.get(i) == ItemState.CONDITION_NOT_MET]
             if met_in_exp:
-                rate = Fraction(len(flipped), len(met_in_exp))
+                flip_rate = Fraction(len(flipped), len(met_in_exp))
                 print(f"题{ordi} shuffled 翻转率: {len(flipped)}/{len(met_in_exp)}")
-                if rate < Fraction(60, 100):
-                    gate_failures.append(f"题{ordi}: shuffled 翻转率 {float(rate):.0%} < 60%")
-            else:
-                gate_failures.append(f"题{ordi}: gold 在预期集内无 MET 条目,shuffled 闸空转")
+
+        failures, notes = task_gate_failures(TaskGateInput(
+            ordinal=ordi, fmt=fmt,
+            gold=_score(GOLD), control=_score("calib-control"),
+            truncated=_score("calib-truncated"), shuffled=_score("calib-shuffled"),
+            flip_rate=flip_rate,
+        ))
+        gate_failures.extend(failures)
+        for note in notes:
+            print(f"note: {note}")
+        if any(v is None for v in (_score(GOLD), _score("calib-control"),
+                                   _score("calib-truncated"), _score("calib-shuffled"))):
+            continue
 
         gold_not_met = [i + 1 for i, it in enumerate(mtask["items"])
                         if by_state_lookup(store, GOLD, 1, exam_version, mtask["task_id"],
                                            it["rubric_item_id"]) == ItemState.CONDITION_NOT_MET]
         print(f"题{ordi} gold 未达标条目(题内序号): {gold_not_met}")
 
-    if all_counts["items"] and Fraction(
-        all_counts["harness_failures"], all_counts["items"]
-    ) > Fraction(2, 100):
-        gate_failures.append("全轮 harness 失败率 > 2%")
+    overall = overall_harness_failure(all_counts["items"], all_counts["harness_failures"])
+    if overall:
+        gate_failures.append(overall)
     for product in [GOLD, *VARIANT_PRODUCTS.values()]:
-        for rec in store.load(product, 1, exam_version):
-            if rec.channel == "text" and rec.state is not None and rec.served_provider is not None:
-                if rec.served_provider not in cfg.provider_order:
-                    served_ok = False
-    if not served_ok:
-        gate_failures.append("存在非钉定 provider 服务的判定")
+        gate_failures.extend(
+            provider_gate_failures(store.load(product, 1, exam_version), cfg)
+        )
 
     print(f"总成本: ${total_cost:.2f} | judge 调用: {budget.used}/{budget.limit}")
     if gate_failures:
