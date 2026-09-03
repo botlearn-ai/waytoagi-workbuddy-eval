@@ -4,6 +4,9 @@ data/
 # 明文 manifest 兜底(tracked 的只有加密 .enc、指纹与 ledger)
 *.manifest.json
 
+# 判定存档:模型原文会引用评分点内容,绝不入库
+runs/
+
 # Python
 .venv/
 __pycache__/
