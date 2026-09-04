@@ -13,7 +13,8 @@
 | W1 数据管线 | parquet 下载(revision 钉 `11e7900cdcac61bc4daf59e65feb238acda98fbf`)、考卷校验、评分点哈希、manifest 冻结加密、三个 CLI | 完成;exam_v1 已冻结(status=frozen,judge 见 configs/judge.exam_v1.json),content 指纹见 manifests/ |
 | 判分核心 | 计分公式(三状态 + 保护规则,盲测 22 例)、判定通道粗分 | 完成;通道分派待 W1 人工复核 891 条 |
 | W2 判分程序 | 四格式解析、六检查器、DeepSeek 文本裁决、判定存储、编排、区分度检验 | 完成;区分度检验 2026-09-03 六道闸全绿放行(4 题 gold 3.43–4.29,改坏件分差与翻转率达标,provider 100% 钉定) |
-| W0 产品试跑 / W2b 提交工具包 / W3 提交与报告 / W4 自动提交 | — | 未开始;正式判分前须完成 891 条通道人工复核 |
+| W2b 提交工具包 | inbox 备料、机器登记、outbox 校验与取件、协议手册 | 完成;端到端冒烟在真实 manifest 上跑通(20 题备料、32 件素材、八项行为逐一验证) |
+| W0 产品试跑 / W3 提交与报告 / W4 自动提交 | — | 未开始;正式判分前须完成 891 条通道人工复核 |
 
 ## 核心数据模型
 
@@ -21,6 +22,8 @@
 - **RubricItem**:一条评分点。`rubric_item_id(上游 id,全局唯一,判定的身份键), criterion(文本,不入库), score(int,可为负,不为 0), tags(上游未文档化,原样存档)`。内容哈希 `sha256(criterion + \x1f + 分值)` 只作漂移探测,不作身份——上游同一题内存在完全相同的 (criterion, score) 对。
 - **判定三状态**:`CONDITION_MET(计分条件成立;负分条目即违规成立、扣分生效) / CONDITION_NOT_MET / NO_EVIDENCE`。NO_EVIDENCE 仅限 harness 侧拿不到证据(渲染失败、超上下文);产品没做的内容记 CONDITION_NOT_MET。「判分未完成」不是状态,走重判,不进计分函数。
 - **计分**(全程 int/Fraction 精确运算):满分基数 = Σ正分;判定分母 = 满分基数 − 无证据正分;earned = Σ(CONDITION_MET 正分,单条计入 ≤ 满分基数 15%) + 扣分(合计 ≥ −满分基数 30%);题分 = 5 × max(0, earned) / 判定分母。两条保护规则同以满分基数为基、互相独立(以判定分母为基会导致分数对判定结果非单调)。分母为 0 → 题按 0 分计入总分并标注;无证据正分占满分基数 > 20% → needs_review,不进自动汇总。
+- **提交工作区**:`submissions/`(gitignored)分 inbox 与 outbox 两棵树。`inbox/{product}_{attempt}/t{NN}/` 含 `prompt.txt`、`materials/`、`spec.json{ordinal, required_format, material_count, material_sha256, time_limit_minutes, followup_allowance}`(不含素材文件名)。`outbox/{product}_{attempt}/t{NN}/` 含主交付物、`attachments/`(不判分)、`submission.json{ordinal, outcome, outcome_note, product_build, started_at, finished_at, followups_used, deliverable_filename}`、校验通过后写入的 `check_report.json`(含 `deliverable_sha256`,取件时重算比对)。
+- **提交终局状态**:`outcome` 枚举 `delivered / no_output / unsupported_export / link_only / product_error`。后四者是「产品交不出可判分文件」的声明,该题按 0 分记入并标注,不占判分器的重判循环;空交付物与素材回交同样只能走声明,绝不放行进判分器——判定分母会扣掉无证据正分,空件反而抬分。
 - **判定通道**:`DETERMINISTIC / TEXT / VISION`,每条评分点走一条,冻结进 manifest;通道理由为枚举(不携带 criterion 派生文本)。
 - **manifest**:考卷的冻结载体,`content`(exam 版本、上游 revision、parquet sha256、披露政策、每题 {task_id, 职业, 格式列表, items:[{rubric_item_id, content_hash, score, channel, tags}]})与 `meta`(frozen_at、judge、状态 `frozen`/`draft-pending-A2`)分离;指纹 = content 规范化 JSON 的 sha256,meta 变更(如 A2 拍板)不动指纹。Fernet 加密入库,指纹与追加式 LEDGER.jsonl tracked,明文副本与 key 在 gitignored `secrets/`。
 
@@ -44,5 +47,8 @@
 | degrade.py | 校验用改坏量具(control/truncated/shuffled,变化断言) |
 | assets.py | gold/素材文件下载 |
 | calibration_gates.py | 区分度检验放行闸(纯函数) |
-| cli.py | 三个 CLI 的参数解析与组装 |
-| scripts/ | verify_dataset / freeze_manifest / verify_manifest / calibration |
+| submission.py | inbox 备料(题面、素材、spec.json;幂等,素材按 sha256 校验重下) |
+| submission_log.py | 提交登记(机器盖 ISO8601 时间戳与追问计数,独占创建防覆盖) |
+| submission_check.py | outbox 校验(八类拦停+一类警告)、取件(sha256 绑定)、全局去重 |
+| cli.py | 六个 CLI 的参数解析与组装 |
+| scripts/ | verify_dataset / freeze_manifest / verify_manifest / calibration / prepare_inbox / log_submission / check_outbox |

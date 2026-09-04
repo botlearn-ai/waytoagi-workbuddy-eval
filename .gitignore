@@ -19,6 +19,7 @@ __pycache__/
 dist/
 *.egg-info/
 
-# 本地产物
+# 本地产物与一次性过程产物
 out/
+scratchpad/
 .DS_Store

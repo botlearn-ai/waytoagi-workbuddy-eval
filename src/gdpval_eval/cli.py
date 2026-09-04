@@ -25,7 +25,10 @@ import json
 import os
 import subprocess
 import sys
+import warnings
 from pathlib import Path
+
+import pyarrow.parquet as pq
 
 from gdpval_eval.crypto import ManifestCryptoError
 from gdpval_eval.dataset import download_parquet, load_tasks, sha256_file
@@ -38,6 +41,21 @@ from gdpval_eval.manifest import (
 )
 from gdpval_eval.manifest import verify_manifest as _verify_manifest
 from gdpval_eval.models import GdpvalEvalError
+from gdpval_eval.submission import SubmissionError, build_inbox
+from gdpval_eval.submission_check import (
+    SubmissionCheckError,
+    check_all_outboxes,
+    check_outbox,
+)
+from gdpval_eval.submission_log import (
+    OUTCOMES,
+    SubmissionAlreadyStartedError,
+    SubmissionLogError,
+    SubmissionNotStartedError,
+    finish,
+    followup,
+    start,
+)
 
 _KEY_ENV_VAR = "GDPVAL_MANIFEST_KEY"
 _MANIFEST_CRYPTO_ERROR_MESSAGE = (
@@ -390,3 +408,253 @@ def verify_manifest_main(argv: list[str]) -> int:
         f"status={result.status} content_fingerprint={result.content_fingerprint}"
     )
     return 0 if result.ok else 1
+
+
+# --------------------------------------------------------------------------
+# prepare_inbox (spec W2b U4, wraps submission.build_inbox)
+# --------------------------------------------------------------------------
+
+
+def _build_prepare_inbox_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="prepare_inbox",
+        description="Lay down submissions/inbox/{product}_{attempt}/t{NN}/ "
+        "(prompt.txt, materials/, spec.json) for every task in a frozen manifest.",
+    )
+    parser.add_argument(
+        "--manifest-plain",
+        type=Path,
+        default=Path("secrets/exam_v1.manifest.json"),
+        help="path to the plaintext frozen manifest",
+    )
+    parser.add_argument(
+        "--parquet",
+        type=Path,
+        default=Path("data/gdpval.parquet"),
+        help="path to the already-downloaded GDPval parquet",
+    )
+    parser.add_argument("--product", type=str, required=True, help="product identifier")
+    parser.add_argument("--attempt", type=int, default=1, help="attempt number (default 1)")
+    parser.add_argument(
+        "--submissions-root",
+        type=Path,
+        default=Path("submissions"),
+        help="root directory holding inbox/ and outbox/",
+    )
+    return parser
+
+
+def prepare_inbox_main(argv: list[str]) -> int:
+    parser = _build_prepare_inbox_parser()
+    args = parser.parse_args(argv)
+
+    if not args.manifest_plain.exists():
+        print(
+            f"error: --manifest-plain file does not exist: {args.manifest_plain}",
+            file=sys.stderr,
+        )
+        return 2
+    if not args.parquet.exists():
+        print(f"error: --parquet file does not exist: {args.parquet}", file=sys.stderr)
+        return 2
+
+    try:
+        manifest = json.loads(args.manifest_plain.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        print(f"error: --manifest-plain file is not valid JSON: {exc}", file=sys.stderr)
+        return 2
+
+    rows_by_task_id = {row["task_id"]: row for row in pq.read_table(args.parquet).to_pylist()}
+    dest = args.submissions_root / "inbox"
+
+    try:
+        report = build_inbox(
+            manifest, rows_by_task_id, dest, product=args.product, attempt=args.attempt
+        )
+    except SubmissionError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+
+    print(
+        f"prepare_inbox: prepared={report.prepared} skipped={report.skipped} "
+        f"materials_downloaded={report.materials_downloaded} "
+        f"materials_repaired={report.materials_repaired}"
+    )
+    return 0
+
+
+# --------------------------------------------------------------------------
+# log_submission (spec W2b U4, wraps submission_log.start/finish/followup)
+# --------------------------------------------------------------------------
+
+
+def _build_log_submission_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="log_submission",
+        description="Machine-stamp submissions/outbox/{product}_{attempt}/t{NN}/"
+        "submission.json (start / finish / followup).",
+    )
+    parser.add_argument(
+        "--submissions-root",
+        type=Path,
+        default=Path("submissions"),
+        help="root directory holding inbox/ and outbox/",
+    )
+    parser.add_argument("--product", type=str, required=True, help="product identifier")
+    parser.add_argument("--attempt", type=int, default=1, help="attempt number (default 1)")
+    parser.add_argument("--ordinal", type=int, required=True, help="task ordinal (1-based)")
+
+    subparsers = parser.add_subparsers(dest="command", required=True)
+    subparsers.add_parser("start", help="stamp started_at")
+
+    finish_parser = subparsers.add_parser("finish", help="stamp finished_at and outcome")
+    finish_parser.add_argument(
+        "--outcome", type=str, required=True, choices=sorted(OUTCOMES)
+    )
+    finish_parser.add_argument("--note", type=str, required=True)
+    finish_parser.add_argument("--product-build", type=str, required=True)
+    finish_parser.add_argument("--deliverable-filename", type=str, default=None)
+
+    subparsers.add_parser("followup", help="record one round of clarification")
+
+    return parser
+
+
+def _task_dir_for(args: argparse.Namespace) -> Path:
+    return (
+        args.submissions_root
+        / "outbox"
+        / f"{args.product}_{args.attempt}"
+        / f"t{args.ordinal:02d}"
+    )
+
+
+def _read_followup_allowance(args: argparse.Namespace) -> int | None:
+    """Read `followup_allowance` from this task's inbox spec.json.
+
+    `followup()` deliberately does not know about the inbox layout (spec
+    W2b U2); the CLI is the one place allowed to couple the two trees.
+    A missing or unreadable spec.json means "don't check" (`None`), not
+    an error — the plan explicitly only requires recording, not gating.
+    """
+    spec_path = (
+        args.submissions_root
+        / "inbox"
+        / f"{args.product}_{args.attempt}"
+        / f"t{args.ordinal:02d}"
+        / "spec.json"
+    )
+    try:
+        data = json.loads(spec_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    allowance = data.get("followup_allowance")
+    return allowance if isinstance(allowance, int) else None
+
+
+def log_submission_main(argv: list[str]) -> int:
+    parser = _build_log_submission_parser()
+    args = parser.parse_args(argv)
+    task_dir = _task_dir_for(args)
+
+    if args.command == "start":
+        try:
+            record = start(task_dir)
+        except SubmissionAlreadyStartedError as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 2
+        print(f"log_submission: 题{args.ordinal:02d} started_at={record['started_at']}")
+        return 0
+
+    if args.command == "finish":
+        try:
+            finish(
+                task_dir,
+                outcome=args.outcome,
+                note=args.note,
+                product_build=args.product_build,
+                deliverable_filename=args.deliverable_filename,
+            )
+        except SubmissionNotStartedError as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 2
+        except SubmissionLogError as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 2
+        print(f"log_submission: 题{args.ordinal:02d} finished outcome={args.outcome}")
+        return 0
+
+    # args.command == "followup"
+    allowance = _read_followup_allowance(args)
+    try:
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            record = followup(task_dir, followup_allowance=allowance)
+    except SubmissionNotStartedError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+
+    print(f"log_submission: 题{args.ordinal:02d} followups_used={record['followups_used']}")
+    for caught_warning in caught:
+        print(f"warning: {caught_warning.message}", file=sys.stderr)
+    return 0
+
+
+# --------------------------------------------------------------------------
+# check_outbox (spec W2b U4, wraps submission_check.check_outbox/check_all_outboxes)
+# --------------------------------------------------------------------------
+
+
+def _build_check_outbox_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="check_outbox",
+        description="Qualify one product/attempt outbox against its inbox contract "
+        "and cross-check global deliverable uniqueness across all outboxes.",
+    )
+    parser.add_argument(
+        "--submissions-root",
+        type=Path,
+        default=Path("submissions"),
+        help="root directory holding inbox/ and outbox/",
+    )
+    parser.add_argument("--product", type=str, required=True, help="product identifier")
+    parser.add_argument("--attempt", type=int, default=1, help="attempt number (default 1)")
+    return parser
+
+
+def check_outbox_main(argv: list[str]) -> int:
+    parser = _build_check_outbox_parser()
+    args = parser.parse_args(argv)
+
+    inbox_root = args.submissions_root / "inbox"
+    outbox_root = args.submissions_root / "outbox"
+
+    try:
+        report = check_outbox(
+            inbox_root, outbox_root, product=args.product, attempt=args.attempt
+        )
+    except SubmissionCheckError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+
+    for ordinal in sorted(report.by_ordinal):
+        result = report.by_ordinal[ordinal]
+        flags = list(result.blocking) + list(result.warnings)
+        print(f"题{ordinal:02d}: status={result.status} flags={flags}")
+
+    print(
+        f"check_outbox: ready_for_grading={report.ready_for_grading} "
+        f"blocked={len(report.blocking)} declared={len(report.declared)}"
+    )
+
+    dedup = check_all_outboxes(args.submissions_root, attempt=args.attempt)
+    print(
+        f"check_all_outboxes: duplicate_groups={len(dedup.duplicate_groups)} "
+        f"blocking={dedup.blocking}"
+    )
+    for group in dedup.duplicate_groups:
+        print(f"  duplicate: {list(group.locations)}")
+
+    if not report.ready_for_grading or dedup.blocking:
+        return 1
+    return 0

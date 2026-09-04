@@ -9,7 +9,8 @@ AI 办公产品横向测评仓库(题源 GDPval)。本仓库将来公开发布,�
 | [PROJECT.md](PROJECT.md) | 项目目的、功能状态、核心数据模型、模块地图 |
 | [PATTERNS.md](PATTERNS.md) | 设计范式、错误处理约定、命名、测试组织 |
 | [TECHSTACK.md](TECHSTACK.md) | 技术栈、依赖、目录结构、环境变量 |
-| [DEVFLOW.md](DEVFLOW.md) | 开发、测试、冻结 manifest 的命令与 CI |
+| [DEVFLOW.md](DEVFLOW.md) | 开发、测试、冻结 manifest、人工提交的命令与 CI |
+| [docs/SUBMISSION_PROTOCOL.md](docs/SUBMISSION_PROTOCOL.md) | 人工提交操作规程:备料、限时与追问额度、异常处置、收尾校验 |
 
 进行中的 plan 在 `.claude/plans/`,当前待办在 `BACKLOG.md`。
 

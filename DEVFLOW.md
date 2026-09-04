@@ -36,6 +36,28 @@ uv run python scripts/verify_manifest.py \
   --fingerprint manifests/exam_v1.fingerprint.sha256
 ```
 
+## W2b 人工提交(60 次:20 题 × 3 产品)
+
+操作规程见 [docs/SUBMISSION_PROTOCOL.md](docs/SUBMISSION_PROTOCOL.md)。产物落在 gitignored 的 `submissions/`。
+
+```bash
+# 1. 备料:每题落地题面、素材、spec.json。幂等,可反复跑
+uv run python scripts/prepare_inbox.py --product <产品代号>
+
+# 2. 每题三步(机器盖时间戳与追问计数,独占创建防覆盖)
+uv run python scripts/log_submission.py --product <产品代号> --ordinal <题序号> start
+uv run python scripts/log_submission.py --product <产品代号> --ordinal <题序号> followup
+uv run python scripts/log_submission.py --product <产品代号> --ordinal <题序号> finish \
+  --outcome delivered --note "" --product-build "<版本号>" \
+  --deliverable-filename "<主交付物文件名>"
+
+# 3. 收尾校验 + 跨产品去重。退出码 0 可进判分 / 1 有拦停项 / 2 前置错误
+uv run python scripts/check_outbox.py --product <产品代号>
+```
+
+判分器按题序号取件的唯一入口是 `submission_check.resolve_deliverable`,它重算 sha256
+与校验时记录的比对,不符即拒绝——换交付物要 `--attempt` 加 1,不要在同一轮里覆盖。
+
 ## CI
 
 `.github/workflows/ci.yml`,push 与 PR 触发,两个 job:
