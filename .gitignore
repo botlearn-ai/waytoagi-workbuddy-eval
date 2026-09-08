@@ -1,14 +1,14 @@
-# 保密与本地数据:题面、素材、gold、20 题清单及其统计预期,绝不入库
-secrets/
+# 题面、素材、专家交付物、20 题清单:数据集本身公开,但选了哪 20 题不入库
 data/
-# 明文 manifest 兜底(tracked 的只有加密 .enc、指纹与 ledger)
-*.manifest.json
 
-# 判定存档:模型原文会引用评分点内容,绝不入库
-runs/
+# API key 与旧版留下的本地机密文件
+secrets/
 
-# 人工提交工作区:inbox 含题面与素材,outbox 含产品交付物,绝不入库
+# 产品交付物
 submissions/
+
+# 判分结果与判定缓存
+results/
 
 # Python
 .venv/
@@ -16,10 +16,7 @@ __pycache__/
 *.pyc
 .pytest_cache/
 .ruff_cache/
-dist/
-*.egg-info/
 
-# 本地产物与一次性过程产物
-out/
+# 本地一次性产物
 scratchpad/
 .DS_Store

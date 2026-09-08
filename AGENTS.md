@@ -1,23 +1,23 @@
 # AGENTS.md
 
-AI 办公产品横向测评仓库(题源 GDPval)。本仓库将来公开发布,写入任何 tracked 文件前先过下面的保密铁律。
+GDPval 判分脚本:三个 AI 办公产品横向测评。四个 Python 文件,平铺在仓库根目录。
 
 ## 文档地图
 
 | 文档 | 内容 |
 |---|---|
-| [PROJECT.md](PROJECT.md) | 项目目的、功能状态、核心数据模型、模块地图 |
-| [PATTERNS.md](PATTERNS.md) | 设计范式、错误处理约定、命名、测试组织 |
-| [TECHSTACK.md](TECHSTACK.md) | 技术栈、依赖、目录结构、环境变量 |
-| [DEVFLOW.md](DEVFLOW.md) | 开发、测试、冻结 manifest、人工提交的命令与 CI |
-| [docs/SUBMISSION_PROTOCOL.md](docs/SUBMISSION_PROTOCOL.md) | 人工提交操作规程:备料、限时与追问额度、异常处置、收尾校验 |
+| [PROJECT.md](PROJECT.md) | 目的、两种判分口径、功能状态、数据模型、模块 |
+| [PATTERNS.md](PATTERNS.md) | 设计约定 |
+| [TECHSTACK.md](TECHSTACK.md) | 依赖、目录、环境变量 |
+| [DEVFLOW.md](DEVFLOW.md) | 备数据、跑判分、测试的命令 |
 
-进行中的 plan 在 `.claude/plans/`,当前待办在 `BACKLOG.md`。
+当前待办在 [BACKLOG.md](BACKLOG.md)。
 
 ## 本 repo 铁律
 
-1. **保密**:题面(prompt)、评分点文本(criterion)、gold 交付物内容、20 题 task_id 清单及其逐题统计,一律不得出现在 tracked 文件里——包括代码、测试 fixture、注释、文档、日志样例。**评分点哈希与 rubric_item_id 同级保密**:数据集公开,sha256(criterion+分值) 可被彩虹表逐条反查,哈希即明文。它们只存在于 gitignored 的 `secrets/`、`data/` 和加密后的 manifest 中;git-tracked 的机密派生物仅限加密 manifest、content 指纹、ledger。报告、异常消息、CLI 输出用题序号/题内序号指代。测试一律使用虚构的合成数据。
-2. **评分点文本只在内存流转**:不写入日志、异常消息、CLI 输出。
-3. **判分逻辑改动走盲测分离**:`tests/hidden/` 对实现者不可见,用 `~/.claude/scripts/run-hidden-tests.sh <repo> <unit>` 验证。
-4. **manifest 一经冻结不可改**:改考卷 = 升版本号重新冻结,指纹文件一并更新。
-5. Python 环境用 uv(见 DEVFLOW.md)。
+1. **规模纪律**:当前三个源码文件合计 505 行,测试 181 行。GDPval 官方判分就是「交付物两两对比,输出 0/0.5/1」;数据集自带的 rubric 逐条判也只是「891 次 LLM 调用 + 加权求和」。新增机制(版本冻结、提交流程、抽象层、通道分类)先问用户。
+2. **保密只挡一件事**:题面、素材、专家交付物、rubric 全文都是 OpenAI 公开开源的,不是机密。唯一不入库的是**选了哪 20 题**——防产品方针对性优化。题号清单在 gitignored 的 `data/task_ids.txt`,报告与 stdout 用题序号(1..20)指代。
+
+   判据:写任何逐题派生量或引用任何 criterion 原文之前,先在公开的 220 题全集上算候选集大小,为 1 即等同写出题号。踩过的两次——某题某通道占正分的精确百分比在全集里唯一命中;一条 criterion 原文若只属一题,引用它就等于点名该题。通用模板句(在多题重复出现的那类)不构成泄露,但落笔前仍要算一次。**举例说明这条判据时,不要把踩过的那个具体数值或原句抄进来。**
+3. **判分改动必测**:`grade.py` 的判分逻辑改动先写测试。测试用合成数据,不依赖真实 parquet。
+4. Python 环境用 uv(见 DEVFLOW.md)。

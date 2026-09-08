@@ -1,32 +1,29 @@
 # PATTERNS.md
 
-## 架构原则
+## 平铺脚本
 
-- **纯函数优先**:计分、哈希、通道分派、manifest 构建都是纯函数,IO(下载、读写文件)集中在 dataset.py 与 CLI 层。
-- **src layout**:业务代码在 `src/gdpval_eval/`,CLI 薄壳在 `scripts/`,只做参数解析与组装,不含业务逻辑。
-- **判分正确性高于一切**:判分相关模块(scoring、hashing、manifest)的改动走盲测分离;宁可记「无证据」也不把读不到的内容判成未达标。
+四个文件在仓库根目录,不做 package、不建 `src/`。`import llm`、`from extract import extract` 直接生效。参照 x-bench-evals 的形态。
 
-## 数据建模
+## 题序号是对外身份
 
-- 共享类型集中在 `models.py`,用 frozen dataclass 与 `enum.Enum`;模块间以类型传递,不传裸 dict(manifest 的最终 JSON 序列化除外)。
-- 评分点身份 = 上游 `rubric_item_id`;内容哈希只作漂移探测。按位置索引评分点的写法都是错的。
-- 哈希前像:criterion 原始字符串逐码位 UTF-8,不 strip、不 unicode/换行归一(上游存在尾随空格、CR/LF、弯引号,任何顺手清理都会让冻结指纹永久对不上)。
-- 计分与分值全用 `int` / `fractions.Fraction`,不引入浮点;展示层才做舍入(两位,ROUND_HALF_UP)。
-- 规范化 JSON(唯一指纹前像):`json.dumps(obj, sort_keys=True, ensure_ascii=False, separators=(",", ":"))` 编 UTF-8,无尾随换行。
+`ordinal`(1..20)用于 stdout、CSV、报告、异常消息。`task_id` 只在 `load_tasks` 内部用于对上 parquet 行。这样输出物不泄露选了哪 20 题。
 
-## 错误处理
+## judge 回复只看末行
 
-- 每个模块定义自己的异常类型,继承自 `GdpvalEvalError`(models.py):`DatasetDownloadError`、`DatasetSchemaError`、`RubricParseError`、`ExamSpecError`、`ManifestCryptoError`、`ManifestFreezeError` 等。
-- 异常消息、日志、CLI 输出不携带 criterion 文本、prompt、gold 内容、task_id、rubric_item_id、内容哈希——公开数据集上哈希可反查,与明文同级。定位评分点用题序号 + 题内序号。
-- CLI 以退出码表意:0 通过,1 校验失败,2 环境/参数错误。
+judge 可以先写理由,最后一行必须是单个词(`MET`/`NOT_MET`,或 `A`/`B`/`TIE`)。解析只取 `splitlines()[-1]`,正则加词边界。解析不出来时取保守值:rubric 口径记不成立,pairwise 记平手。
 
-## 测试组织
+## 两两对比要随机 A/B 位
 
-- `tests/` 平铺常规单元测试(`test_<module>.py`);判分模块另有 `tests/visible/`(实现者可见)与 `tests/hidden/`(仅评审与 CI 可见语义,实现者只看计数)。
-- 测试函数命名 `test_<unit>_<scenario>`,便于 `-k <unit>` 过滤。
-- fixture 一律虚构:合成 criterion 文本、假 task_id(如 `task-0001`)、pyarrow 现场生成的小 parquet。真实数据只出现在标记 `integration` 的测试里,默认不跑(见 DEVFLOW.md)。
+LLM 对先出现的选项有位置偏好。`judge_pairwise` 按 `rng.random() < 0.5` 决定产品交付物放 A 还是 B,再把 judge 的 `A`/`B` 换算回「产品是否更好」。换算方向是最容易写反的地方,测试逐组合覆盖。落缓存时记下 `a_side` 供复查。
 
-## 刻意省略的设计
+## 判定缓存
 
-- 不做判定结果存储层(唯一键、幂等写入)——那是 W2 的一部分,接口设计以 manifest 的哈希为锚点。
-- 不做配置系统:两个环境变量(HF_ENDPOINT、GDPVAL_MANIFEST_KEY)+ CLI 参数足够。
+`results/<product>.<mode>.cache.jsonl`,一行一条判定,追加写。key 是 `"<题序号>:<item_id>"`(pairwise 口径只用题序号)。跑之前整个读进内存,命中即跳过。作用是重跑不重复付费——891 条 × 3 产品的调用量下,中断重跑的代价是真金白银。
+
+## 异常消息不带文件内容
+
+`ExtractError` 只写格式名、页数、上限这类数字。交付物内容与 judge 原文只进 gitignored 的 `results/`。
+
+## 上限只保留会真实触发的那几条
+
+`MAX_CHARS`(400k,judge 上下文)、`_MAX_CELLS`、`_MAX_PDF_PAGES`。交付物是自己从产品导出的文件,不是不可信上传,zip 炸弹那一层检查已刻意去掉。
