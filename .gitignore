@@ -10,6 +10,10 @@ submissions/
 # 判分结果与判定缓存
 results/
 
+# 旧架构留下的判定存档:含 rubric_item_id 与逐条判定
+runs/
+out/
+
 # Python
 .venv/
 __pycache__/
