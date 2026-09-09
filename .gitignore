@@ -7,6 +7,9 @@ secrets/
 # 产品交付物
 submissions/
 
+# 三产品独立题包、人工记录和本轮映射
+tasks/
+
 # 判分结果与判定缓存
 results/
 
