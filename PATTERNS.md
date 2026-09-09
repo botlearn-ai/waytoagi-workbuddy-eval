@@ -10,6 +10,8 @@ ordinal 从 1 连续编号，对外使用题序号。题目顺序来自 gitignor
 
 原始输入放在题面的 prompt.txt 与 reference_files 中；最终答案集中在 output。校验输入摘要后才将答案送 judge。每个产品有独立的附件副本。备题保留已有人工记录与交付物，已存在的输入必须与原始材料一致。
 
+题包附件直接使用 reference_files/原始文件名。下载缓存按 URL 摘要隔离；题包平铺前检查忽略大小写的同名冲突。重复备题将已记录的嵌套附件平铺，核验内容一致后更新映射和清理空目录，保留人工记录与交付物。
+
 ## 状态和空值
 
 人工状态使用 pending、running、completed、failed。completed 收取最终答案后进入判分，成功记 graded；输入或 judge 错误记 error。人工 failed 计零分，其余未完成与错误留空。只有整套题均 graded 或 failed 的产品可参与排名。
