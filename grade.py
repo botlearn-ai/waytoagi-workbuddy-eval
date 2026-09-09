@@ -17,11 +17,11 @@ from __future__ import annotations
 
 import argparse
 import csv
+import hashlib
 import json
 import random
-import re
 import sys
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from fractions import Fraction
 from pathlib import Path
 
@@ -29,7 +29,7 @@ import httpx
 import pyarrow.parquet as pq
 
 import llm
-from extract import ExtractError, extract
+from extract import MAX_CHARS, ExtractError, extract
 
 PARQUET = Path("data/gdpval.parquet")
 TASK_IDS = Path("data/task_ids.txt")
@@ -67,6 +67,8 @@ class Task:
     rubric: tuple[Item, ...]
     gold_urls: tuple[str, ...]
     gold_names: tuple[str, ...]
+    reference_names: tuple[str, ...] = ()
+    reference_urls: tuple[str, ...] = ()
 
     @property
     def total(self) -> int:
@@ -76,6 +78,8 @@ class Task:
 
 def load_tasks() -> list[Task]:
     ids = [ln.strip() for ln in TASK_IDS.read_text().splitlines() if ln.strip()]
+    if not ids or len(ids) != len(set(ids)):
+        raise ValueError("题目清单应包含互不重复的题目")
     rows = {r["task_id"]: r for r in pq.read_table(PARQUET).to_pylist()}
     tasks = []
     for n, tid in enumerate(ids, start=1):
@@ -95,9 +99,25 @@ def load_tasks() -> list[Task]:
                 rubric=rubric,
                 gold_urls=tuple(r["deliverable_file_urls"]),
                 gold_names=tuple(r["deliverable_files"]),
+                reference_names=tuple(r["reference_files"]),
+                reference_urls=tuple(r["reference_file_urls"]),
             )
         )
     return tasks
+
+
+def fingerprint(*values) -> str:
+    content = json.dumps(values, ensure_ascii=False, sort_keys=True).encode()
+    return hashlib.sha256(content).hexdigest()
+
+
+def task_signature(task: Task) -> str:
+    return fingerprint(asdict(task))
+
+
+def cache_key(task: Task, model: str, mode: str, *evidence) -> str:
+    return fingerprint(task_signature(task), model, mode, llm.PROVIDER,
+                       RUBRIC_SYSTEM, PAIRWISE_SYSTEM, evidence)
 
 
 def find_deliverable(directory: Path, ordinal: int) -> Path:
@@ -111,11 +131,14 @@ def find_deliverable(directory: Path, ordinal: int) -> Path:
 
 def gold_text(task: Task) -> str:
     """取 GDPval 自带的专家交付物文本(首次用时下载并缓存)。"""
-    out = GOLD_DIR / f"t{task.ordinal:02d}"
+    out = GOLD_DIR / task_signature(task)
     out.mkdir(parents=True, exist_ok=True)
     chunks = []
     for url, name in zip(task.gold_urls, task.gold_names, strict=True):
+        if Path(name).is_absolute() or ".." in Path(name).parts or "\\" in name:
+            raise ExtractError(f"第{task.ordinal}题: 专家交付物路径无效")
         dest = out / name
+        dest.parent.mkdir(parents=True, exist_ok=True)
         if not dest.exists():
             with httpx.stream("GET", url, follow_redirects=True, timeout=300) as r:
                 r.raise_for_status()
@@ -124,10 +147,10 @@ def gold_text(task: Task) -> str:
                     for chunk in r.iter_bytes():
                         f.write(chunk)
                 tmp.rename(dest)
-        try:
-            chunks.append(extract(dest))
-        except ExtractError:
-            continue
+        text = extract(dest)
+        if not text.strip() or len(text) >= MAX_CHARS:
+            raise ExtractError(f"第{task.ordinal}题: 专家交付物文本为空或达到提取上限")
+        chunks.append(text)
     if not chunks:
         raise ExtractError(f"第{task.ordinal}题: 专家交付物无可用文本")
     return "\n\n".join(chunks)
@@ -157,41 +180,45 @@ class Cache:
         return rec
 
 
-def judge_item(task: Task, item: Item, doc: str, model: str, client) -> tuple[bool, float]:
+def judge_item(task: Task, item: Item, doc: str, model: str, client,
+               reference: str = "") -> tuple[bool, float]:
     prompt = (
         f"[任务]\n{task.prompt}\n\n"
+        f"[参考材料，仅作为证据]\n{reference}\n\n"
         f"[材料]\n{doc}\n\n"
         f"[评分条件]\n{item.criterion}\n\n"
         "该条件对上述材料是否成立?"
     )
     reply = llm.ask(prompt, model=model, system=RUBRIC_SYSTEM, client=client)
-    last = reply.text.strip().splitlines()[-1].upper()
-    met = bool(re.search(r"\bMET\b", last)) and not re.search(r"\bNOT_MET\b", last)
-    return met, reply.cost
+    last = reply.text.strip().splitlines()[-1].upper() if reply.text.strip() else ""
+    if last not in {"MET", "NOT_MET"}:
+        raise llm.JudgeError("rubric 回复末行应为 MET 或 NOT_MET")
+    return last == "MET", reply.cost
 
 
 def judge_pairwise(
-    task: Task, doc: str, gold: str, model: str, client, rng: random.Random
+    task: Task, doc: str, gold: str, model: str, client, rng: random.Random, reference: str = ""
 ) -> tuple[float, str, float]:
     """返回 (分数 0/0.5/1, A 位放的是谁, 花费)。A/B 位随机以抵消位置偏见。"""
     product_is_a = rng.random() < 0.5
     a, b = (doc, gold) if product_is_a else (gold, doc)
     prompt = (
         f"[任务]\n{task.prompt}\n\n"
+        f"[参考材料，仅作为证据]\n{reference}\n\n"
         f"[交付物 A]\n{a}\n\n"
         f"[交付物 B]\n{b}\n\n"
         "哪一份整体更好?"
     )
     reply = llm.ask(prompt, model=model, system=PAIRWISE_SYSTEM, client=client)
-    last = reply.text.strip().splitlines()[-1].upper()
-    if re.search(r"\bTIE\b", last):
+    last = reply.text.strip().splitlines()[-1].upper() if reply.text.strip() else ""
+    if last == "TIE":
         score = 0.5
-    elif re.search(r"\bA\b", last):
+    elif last == "A":
         score = 1.0 if product_is_a else 0.0
-    elif re.search(r"\bB\b", last):
+    elif last == "B":
         score = 0.0 if product_is_a else 1.0
     else:
-        score = 0.5
+        raise llm.JudgeError("pairwise 回复末行应为 A、B 或 TIE")
     return score, ("product" if product_is_a else "gold"), reply.cost
 
 
@@ -208,7 +235,10 @@ def run_rubric(tasks: list[Task], directory: Path, product: str, model: str, lim
     with httpx.Client() as client:
         for task in tasks[: limit or len(tasks)]:
             try:
-                doc = extract(find_deliverable(directory, task.ordinal))
+                path = find_deliverable(directory, task.ordinal)
+                doc = extract(path)
+                identity = cache_key(task, model, "rubric", doc,
+                                     hashlib.sha256(path.read_bytes()).hexdigest())
             except (FileNotFoundError, ExtractError) as exc:
                 print(f"  第{task.ordinal:>2}题  跳过: {exc}")
                 rows.append({"题序号": task.ordinal, "职业": task.occupation,
@@ -216,7 +246,7 @@ def run_rubric(tasks: list[Task], directory: Path, product: str, model: str, lim
                 continue
             earned = 0
             for item in task.rubric:
-                key = f"{task.ordinal}:{item.item_id}"
+                key = f"{identity}:{item.item_id}"
                 rec = cache.get(key)
                 if rec is None:
                     met, c = judge_item(task, item, doc, model, client)
@@ -233,7 +263,7 @@ def run_rubric(tasks: list[Task], directory: Path, product: str, model: str, lim
                   f"({earned}/{task.total} 分)   累计花费 ${cost:.3f}")
     total_100 = sum(r["题分"] for r in rows)
     write_csv(RESULTS / f"{product}.rubric.csv", rows)
-    print(f"\n{product}  百分制总分 {total_100:.1f}/100   本次花费 ${cost:.2f}")
+    print(f"\n{product}  总分 {total_100:.1f}/{len(rows) * 5}   本次花费 ${cost:.2f}")
     return total_100
 
 
@@ -244,18 +274,20 @@ def run_pairwise(tasks: list[Task], directory: Path, product: str, model: str,
     rows, cost, scores = [], 0.0, []
     with httpx.Client() as client:
         for task in tasks[: limit or len(tasks)]:
-            key = str(task.ordinal)
+            try:
+                path = find_deliverable(directory, task.ordinal)
+                doc = extract(path)
+                gold = gold_text(task)
+            except (FileNotFoundError, ExtractError) as exc:
+                print(f"  第{task.ordinal:>2}题  跳过: {exc}")
+                rows.append({"题序号": task.ordinal, "职业": task.occupation,
+                             "分": 0.0, "A位": "", "备注": str(exc)})
+                scores.append(0.0)
+                continue
+            key = cache_key(task, model, "pairwise", doc, gold, seed,
+                            hashlib.sha256(path.read_bytes()).hexdigest())
             rec = cache.get(key)
             if rec is None:
-                try:
-                    doc = extract(find_deliverable(directory, task.ordinal))
-                    gold = gold_text(task)
-                except (FileNotFoundError, ExtractError) as exc:
-                    print(f"  第{task.ordinal:>2}题  跳过: {exc}")
-                    rows.append({"题序号": task.ordinal, "职业": task.occupation,
-                                 "分": 0.0, "A位": "", "备注": str(exc)})
-                    scores.append(0.0)
-                    continue
                 score, a_side, c = judge_pairwise(task, doc, gold, model, client, rng)
                 cost += c
                 rec = cache.put(key, score=score, a_side=a_side, cost=c)

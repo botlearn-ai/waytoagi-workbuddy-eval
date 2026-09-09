@@ -66,10 +66,10 @@ def test_末行为NOT_MET判为不成立(monkeypatch):
     assert met is False
 
 
-def test_末行无关键词判为不成立(monkeypatch):
+def test_末行无关键词报告判分错误(monkeypatch):
     monkeypatch.setattr(llm, "ask", fake_ask("无法判断"))
-    met, _ = judge_item(make_task(), Item("a", "条件甲", 2), "材料", "m", None)
-    assert met is False
+    with pytest.raises(llm.JudgeError):
+        judge_item(make_task(), Item("a", "条件甲", 2), "材料", "m", None)
 
 
 # ---------- 两两对比的 A/B 位映射 ----------
@@ -179,3 +179,65 @@ def test_交付物缺失的题记零分并留备注(monkeypatch, tmp_path: Path)
     monkeypatch.setattr(grade, "RESULTS", tmp_path)
     task = make_task([Item("a", "条件甲", 3)])
     assert grade.run_rubric([task], tmp_path, "synthetic", "m", None) == 0
+
+
+@pytest.mark.parametrize("reply", ["", "A or B", "possibly A", "unknown"])
+def test_对比回复畸形时报告错误(monkeypatch, reply):
+    monkeypatch.setattr(llm, "ask", lambda *a, **k: llm.Reply(reply, 0))
+    with pytest.raises(llm.JudgeError):
+        judge_pairwise(make_task(), "answer", "gold", "m", None, random.Random(0))
+
+
+@pytest.mark.parametrize("mode", ["rubric", "pairwise"])
+def test_旧入口更换答案或模型后重新判分(monkeypatch, tmp_path, mode):
+    monkeypatch.setattr(grade, "RESULTS", tmp_path / "results")
+    monkeypatch.setattr(grade, "extract", lambda p: p.read_text())
+    monkeypatch.setattr(grade, "gold_text", lambda t: "gold")
+    path = tmp_path / "t01.docx"
+    path.write_text("first")
+    calls = []
+
+    def ask(*args, **kwargs):
+        calls.append(1)
+        return llm.Reply("MET" if mode == "rubric" else "TIE", 0)
+
+    monkeypatch.setattr(llm, "ask", ask)
+    task = make_task([Item("a", "condition", 2)])
+
+    def run(model):
+        if mode == "rubric":
+            grade.run_rubric([task], tmp_path, "synthetic", model, None)
+        else:
+            grade.run_pairwise([task], tmp_path, "synthetic", model, None, 0)
+
+    run("m1")
+    run("m1")
+    assert len(calls) == 1
+    path.write_text("second")
+    run("m1")
+    run("m2")
+    assert len(calls) == 3
+
+
+@pytest.mark.parametrize("bad_text", [None, ""])
+def test_专家文件无法读取时整体报错(monkeypatch, tmp_path, bad_text):
+    from dataclasses import replace
+
+    task = replace(make_task(), gold_names=("one.docx", "two.docx"),
+                   gold_urls=("https://example.org/one", "https://example.org/two"))
+    monkeypatch.setattr(grade, "GOLD_DIR", tmp_path)
+    folder = tmp_path / grade.task_signature(task)
+    folder.mkdir()
+    for name in task.gold_names:
+        (folder / name).write_bytes(b"synthetic")
+
+    def extract(path):
+        if path.name == "one.docx":
+            return "valid part"
+        if bad_text is None:
+            raise grade.ExtractError("synthetic error")
+        return bad_text
+
+    monkeypatch.setattr(grade, "extract", extract)
+    with pytest.raises(grade.ExtractError):
+        grade.gold_text(task)
