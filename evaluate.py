@@ -49,7 +49,7 @@ def safe_path(root: Path, name: str) -> Path:
 
 def reference_path(name: str) -> str:
     safe_path(Path("."), name)
-    return name if name.startswith("reference_files/") else f"reference_files/{name}"
+    return f"reference_files/{PurePosixPath(name).name}"
 
 
 def download(url: str, path: Path) -> None:
@@ -95,10 +95,15 @@ def read_manifest(root, tasks):
 
 def prepare(root: Path, tasks) -> None:
     identities = manifest_tasks(tasks)
+    for task in tasks:
+        names = [reference_path(name).casefold() for name in task.reference_names]
+        if len(names) != len(set(names)):
+            raise ValueError(f"第{task.ordinal}题: 附件存在同名文件，请先核对材料")
     root.mkdir(parents=True, exist_ok=True)
     if safe_path(root, "manifest.json").exists():
         read_manifest(root, tasks)
     records = []
+    cleanup = []
     for task, identity in zip(tasks, identities, strict=True):
         inputs = {"prompt.txt": task.prompt.encode(), "START.txt": HANDOFF.encode()}
         for name, url in zip(task.reference_names, task.reference_urls, strict=True):
@@ -112,6 +117,16 @@ def prepare(root: Path, tasks) -> None:
         hashes = {name: hashlib.sha256(content).hexdigest() for name, content in inputs.items()}
         for product in PRODUCTS:
             packet = safe_path(root, f"{product}/t_{task.ordinal:02d}")
+            for name in task.reference_names:
+                relative = reference_path(name)
+                original = (
+                    name if name.startswith("reference_files/") else f"reference_files/{name}"
+                )
+                old = safe_path(packet, original)
+                if original != relative and old.exists():
+                    if file_hash(old) != hashes[relative]:
+                        raise ValueError(f"{product} 第{task.ordinal}题: 已有参考附件发生改动")
+                    cleanup.append((old, packet / "reference_files"))
             for name, content in inputs.items():
                 dest = safe_path(packet, name)
                 if dest.exists() and file_hash(dest) != hashes[name]:
@@ -126,7 +141,18 @@ def prepare(root: Path, tasks) -> None:
         records.append({**identity, "files": hashes})
         print(f"已备第{task.ordinal}题，三个产品各一份")
     manifest = {"products": list(PRODUCTS), "tasks": records}
-    safe_path(root, "manifest.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2))
+    temporary = safe_path(root, "manifest.json.part")
+    temporary.write_text(json.dumps(manifest, ensure_ascii=False, indent=2))
+    temporary.replace(safe_path(root, "manifest.json"))
+    for old, reference in cleanup:
+        old.unlink()
+        parent = old.parent
+        while parent != reference:
+            try:
+                parent.rmdir()
+            except OSError:
+                break
+            parent = parent.parent
     if not safe_path(root, "metrics.csv").exists():
         rows = [
             {

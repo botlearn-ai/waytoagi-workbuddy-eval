@@ -4,7 +4,7 @@
 
 ## 测评流程
 
-`evaluate.py prepare` 为三个产品分别创建 `tasks/<产品>/t_NN/`，包含 START.txt、原始题面、参考附件与 output 目录。输入摘要与题目映射写入根目录 manifest.json；人工耗时、token、会话和完成状态填写到 metrics.csv。
+`evaluate.py prepare` 为三个产品分别创建 `tasks/<产品>/t_NN/`，包含 START.txt、原始题面、参考附件与 output 目录。参考附件按原始文件名直接放在 reference_files 第一层。输入摘要与题目映射写入根目录 manifest.json；人工耗时、token、会话和完成状态填写到 metrics.csv。
 
 `evaluate.py run` 校验映射与材料，从各题 output 读取最终文件，调用判分函数，生成 scores.csv、leaderboard.csv 和 report.md。每道题可交付多个办公文件。
 

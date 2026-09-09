@@ -437,3 +437,87 @@ def test_cli_full_three_product_flow_uses_real_llm_client_with_mock_http(exam, m
     assert all(r["tokens_total"] == "20" for r in ranks)
     assert ev.main(["run", "--root", str(root)]) == 0
     assert len(requests) == 6
+
+
+def hashed_reference(exam, monkeypatch):
+    root, tasks = exam
+    task = replace(
+        tasks[0],
+        reference_names=(f"reference_files/{'a' * 32}/source.txt",),
+        reference_urls=("https://example.org/source.txt",),
+    )
+
+    def download(url, path):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("source evidence")
+
+    monkeypatch.setattr(ev, "download", download)
+    return root, [task]
+
+
+def test_reference_export_uses_original_filename_directly(exam, monkeypatch):
+    root, tasks = hashed_reference(exam, monkeypatch)
+    ev.prepare(root, tasks)
+    for product in PRODUCTS:
+        reference = root / product / "t_01/reference_files"
+        assert sorted(p.name for p in reference.iterdir()) == ["source.txt"]
+        assert (reference / "source.txt").read_text() == "source evidence"
+    record = ev.read_manifest(root, tasks)["tasks"][0]
+    assert "reference_files/source.txt" in record["files"]
+
+
+def test_existing_hash_layout_is_flattened_with_answers_and_metrics_preserved(exam, monkeypatch):
+    root, tasks = hashed_reference(exam, monkeypatch)
+    with monkeypatch.context() as old:
+        old.setattr(ev, "reference_path", lambda name: name)
+        ev.prepare(root, tasks)
+    original_answer = answer(root).read_bytes()
+    metrics(root, status="completed", session="session-1", elapsed_seconds="9", tokens="17")
+    original_metrics = (root / "metrics.csv").read_bytes()
+    original_prompt = (root / PRODUCTS[0] / "t_01/prompt.txt").read_bytes()
+
+    def no_download(*args):
+        pytest.fail("Cached reference should be reused")
+
+    monkeypatch.setattr(ev, "download", no_download)
+    ev.prepare(root, tasks)
+    ev.prepare(root, tasks)
+    assert (root / "metrics.csv").read_bytes() == original_metrics
+    assert answer_path(root).read_bytes() == original_answer
+    assert (root / PRODUCTS[0] / "t_01/prompt.txt").read_bytes() == original_prompt
+    record = ev.read_manifest(root, tasks)["tasks"][0]
+    for product in PRODUCTS:
+        packet = root / product / "t_01"
+        assert not (packet / "reference_files" / ("a" * 32)).exists()
+        ev.check_inputs(packet, record)
+
+
+@pytest.mark.parametrize("second_name", ["source.txt", "SOURCE.txt"])
+def test_flattened_filename_collision_is_reported_before_export(exam, monkeypatch, second_name):
+    root, tasks = hashed_reference(exam, monkeypatch)
+    task = replace(
+        tasks[0],
+        reference_names=(*tasks[0].reference_names, f"reference_files/{'b' * 32}/{second_name}"),
+        reference_urls=(*tasks[0].reference_urls, "https://example.org/second.txt"),
+    )
+    with pytest.raises(ValueError, match="同名"):
+        ev.prepare(root, [task])
+    assert not (root / "manifest.json").exists()
+
+
+@pytest.mark.parametrize("changed", ["legacy", "flat"])
+def test_flattening_preserves_conflicting_local_files(exam, monkeypatch, changed):
+    root, tasks = hashed_reference(exam, monkeypatch)
+    with monkeypatch.context() as old:
+        old.setattr(ev, "reference_path", lambda name: name)
+        ev.prepare(root, tasks)
+    packet = root / PRODUCTS[0] / "t_01"
+    path = packet / (
+        tasks[0].reference_names[0] if changed == "legacy" else "reference_files/source.txt"
+    )
+    path.write_text("human edit")
+    manifest_before = (root / "manifest.json").read_bytes()
+    with pytest.raises(ValueError):
+        ev.prepare(root, tasks)
+    assert path.read_text() == "human edit"
+    assert (root / "manifest.json").read_bytes() == manifest_before
